@@ -177,7 +177,7 @@ class Scheduler:
     def postprocess(
         self,
         seqs: list[Sequence],
-        prev_token_ids: dict[int, int],
+        prev_token_ids: dict[int, list[int]],
         stream_output_queue=None,
     ) -> list[Sequence]:
         is_deferred_out = prev_token_ids.get(-1, False)
@@ -188,20 +188,24 @@ class Scheduler:
         for seq in self.running:
             if seq.id not in prev_token_ids:
                 continue
-            token_id = prev_token_ids[seq.id]
+            token_ids = prev_token_ids[seq.id]
             new_tokens = []
             if is_deferred_out:
-                seq.token_ids[-1] = token_id
+                if token_ids:
+                    seq.token_ids[-1] = token_ids[0]
 
                 if seq.output_tokens:
-                    seq.output_tokens[-1] = token_id
-                    new_tokens = [token_id]
+                    if token_ids:
+                        seq.output_tokens[-1] = token_ids[0]
+                        new_tokens = token_ids[:1]
                 else:
-                    seq.output_tokens.append(token_id)
-                    new_tokens = [token_id]
+                    if token_ids:
+                        seq.output_tokens.append(token_ids[0])
+                        new_tokens = token_ids[:1]
             else:
-                seq.append_token(token_id)
-                new_tokens = [token_id]
+                for token_id in token_ids:
+                    seq.append_token(token_id)
+                    new_tokens.append(token_id)
 
             if seq.num_completion_tokens == 1 and seq.first_token_time == 0.0:
                 seq.first_token_time = time.time()
@@ -214,7 +218,8 @@ class Scheduler:
                         leave_reason = "stop_sequence"
                         break
             else:
-                if not seq.ignore_eos and token_id == self.eos_token_id:
+                # Check the last token in the list for EOS
+                if token_ids and not seq.ignore_eos and token_ids[-1] == self.eos_token_id:
                     leave_reason = "eos"
                 elif seq.num_completion_tokens == seq.max_tokens:
                     leave_reason = "max_tokens"

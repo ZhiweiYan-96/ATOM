@@ -98,12 +98,12 @@ class tokenIDProcessor:
 
     def prepare_sampled_ids(
         self, batch: ScheduledBatch, sampled_token_ids: torch.Tensor
-    ) -> dict[int, int]:
+    ) -> dict[int, list[int]]:
         if not self.is_deferred_out:
             token_ids = sampled_token_ids.tolist()
             req_ids = batch.req_ids
-            ret = {seq_id: token_id for seq_id, token_id in zip(req_ids, token_ids)}
-            ret[-1] = 0
+            ret = {seq_id: [token_id] for seq_id, token_id in zip(req_ids, token_ids)}
+            ret[-1] = 0 # is_deferred_out flag
             return ret
         token_ids = self.recv_async_output()
         self.send_to_cpu_async(sampled_token_ids)
@@ -111,7 +111,7 @@ class tokenIDProcessor:
         if self.prev_batch is not None:
             req_ids = self.prev_batch.req_ids
             token_ids = {
-                seq_id: token_id for seq_id, token_id in zip(req_ids, token_ids)
+                seq_id: [token_id] for seq_id, token_id in zip(req_ids, token_ids)
             }
         else:
             # first time, no previous tokens
@@ -799,7 +799,7 @@ class ModelRunner:
         batch: ScheduledBatch,
         logits: torch.Tensor,
         temperatures: torch.Tensor,
-    ) -> dict[int, int]:
+    ) -> dict[int, list[int]]:
         sampled_tokens = self.sampler(logits, temperatures)
         if get_tp_group().world_size > 1 and self.tokenID_processor.is_deferred_out:
             sampled_tokens = get_tp_group().broadcast(sampled_tokens, src=0)
@@ -810,7 +810,7 @@ class ModelRunner:
         return token_ids
 
     @torch.inference_mode()
-    def forward(self, batch: ScheduledBatch) -> dict[int, int]:
+    def forward(self, batch: ScheduledBatch) -> dict[int, list[int]]:
         input_ids, temperatures = self.prepare_model(batch)
         logits = self.run_model(input_ids)
         reset_forward_context()
