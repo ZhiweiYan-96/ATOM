@@ -97,6 +97,15 @@ jobs:
           echo "=== Output ==="
           cat atom_test_output.txt
 
+          echo "Comparing output with golden outputs..."
+          diff atom_test_output.txt golden_outputs.json
+          if [ $? -ne 0 ]; then
+            echo "Output does not match golden outputs."
+            exit 1
+          else
+            echo "Output matches golden outputs."
+          fi
+
       - name: Clean Up
         if: always()
         run: |
