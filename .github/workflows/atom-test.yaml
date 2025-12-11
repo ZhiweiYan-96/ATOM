@@ -98,13 +98,19 @@ jobs:
           cat atom_test_output.txt
 
           echo "Comparing output with golden outputs..."
-          diff atom_test_output.txt golden_outputs.json
+          diff atom_test_output.txt .github/workflows/golden_outputs.txt
           if [ $? -ne 0 ]; then
             echo "Output does not match golden outputs."
             exit 1
           else
             echo "Output matches golden outputs."
           fi
+
+      - name: Upload output
+        uses: actions/upload-artifact@v4
+        with:
+          name: atom_test_output
+          path: atom_test_output.txt
 
       - name: Clean Up
         if: always()
