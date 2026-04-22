@@ -365,7 +365,7 @@ jobs:
           RUN pip uninstall -y atom || true
           RUN rm -rf /app/ATOM
           COPY . /app/ATOM
-          RUN cd /app/ATOM && pip install -e .
+          RUN cd /app/ATOM && pip install . --no-deps
           RUN echo "=== ATOM version AFTER installation ===" && pip show atom || true
           EOF
 
