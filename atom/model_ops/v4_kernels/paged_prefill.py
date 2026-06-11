@@ -44,6 +44,8 @@ Numerics: identical online-softmax + sink finalization to
 (then equivalent to a decode call with the same prefix indices).
 """
 
+import os
+
 import torch
 import triton
 import triton.language as tl
@@ -369,6 +371,18 @@ def sparse_attn_v4_paged_prefill(
     Returns:
       out: [T, H, D] same dtype as q.
     """
+    if os.environ.get("ATOM_V4_PREFILL_REF") == "1":
+        return sparse_attn_v4_paged_prefill_reference(
+            q,
+            unified_kv,
+            kv_indices_prefix,
+            kv_indptr_prefix,
+            kv,
+            kv_indices_extend,
+            kv_indptr_extend,
+            attn_sink,
+            softmax_scale,
+        )
     # Backend selection: prefer OPUS when available; fall back to Triton on
     # import failure, env override, or runtime error (e.g. unsupported GPU).
     if not envs.ATOM_FORCE_ATTN_TRITON and _HAS_OPUS:
