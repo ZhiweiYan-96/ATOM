@@ -1385,6 +1385,12 @@ class DualRMSNormMXFP8:
         return q_fp8, q_scale, k_out
 
 
+def _rows(x: torch.Tensor) -> torch.Tensor:
+    """`x` as unit-stride rows."""
+    x = x.reshape(-1, x.shape[-1])
+    return x if x.stride(-1) == 1 else x.contiguous()
+
+
 class DualRMSNormBF16:
     """BF16 `DualRMSNormMXFP8`: both norms in one launch (AITER's
     `fused_qk_rmsnorm_group_quant` without a quant), Q unquantized (scale
@@ -1398,12 +1404,7 @@ class DualRMSNormBF16:
     @mark_trace
     def __call__(self, q: torch.Tensor, k: torch.Tensor):
         lead = q.shape[:-1]
-        q2 = q.reshape(-1, q.shape[-1])
-        k2 = k.reshape(-1, k.shape[-1])
-        if q2.stride(-1) != 1:
-            q2 = q2.contiguous()
-        if k2.stride(-1) != 1:
-            k2 = k2.contiguous()
+        q2, k2 = _rows(q), _rows(k)
         yq = torch.empty(q2.shape, dtype=q.dtype, device=q.device)
         yk = torch.empty(k2.shape, dtype=k.dtype, device=k.device)
         if q2.shape[0]:
@@ -1439,12 +1440,7 @@ class DualRMSNormPerToken(DualRMSNormBF16):
     @mark_trace
     def __call__(self, q: torch.Tensor, k: torch.Tensor):
         lead = q.shape[:-1]
-        q2 = q.reshape(-1, q.shape[-1])
-        k2 = k.reshape(-1, k.shape[-1])
-        if q2.stride(-1) != 1:
-            q2 = q2.contiguous()
-        if k2.stride(-1) != 1:
-            k2 = k2.contiguous()
+        q2, k2 = _rows(q), _rows(k)
         yq = torch.empty(q2.shape, dtype=self.quant_dtype, device=q.device)
         sq = torch.empty((q2.shape[0], 1), dtype=torch.float32, device=q.device)
         yk = torch.empty(k2.shape, dtype=k.dtype, device=k.device)

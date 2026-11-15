@@ -3947,17 +3947,17 @@ class FusedMoE(torch.nn.Module):
     ) -> None:
         """Batch row-local experts to accelerate streaming online quantization."""
         batch_size = 8
-        inter, hidden = self.intermediate_size_per_partition, self.hidden_size
+        inter = self.intermediate_size_per_partition
 
-        # Drop the source's padding (MXFP4 pads intermediate and hidden).
+        # Drop the source's intermediate padding (MXFP4).
         def _trim_w13(bf16):
             half = bf16.shape[1] // 2
             if half > inter:
                 bf16 = torch.cat([bf16[:, :inter], bf16[:, half : half + inter]], dim=1)
-            return bf16[..., :hidden]
+            return bf16
 
         def _trim_w2(bf16):
-            return bf16[:, :hidden, :inter]
+            return bf16[..., :inter]
 
         def _quantize(source, scale, trim):
             count, rows = source.shape[:2]
@@ -4159,6 +4159,16 @@ class FusedMoE(torch.nn.Module):
             QuantType.per_1x128,
             QuantType.per_1x32,
         )
+        # Its consumers keep an MXFP4 source's hidden padding (GPT-OSS pads the
+        # input) and expert bias, which the target does not carry.
+        if source_quant_dtype == dtypes.fp4x2 and (
+            getattr(self.quant_method, "hidden_pad", 0)
+            or getattr(self, "w13_bias", None) is not None
+        ):
+            raise NotImplementedError(
+                f"{self.layer_name}: online quantization of MXFP4 experts with "
+                "hidden padding or expert bias"
+            )
 
         def _dequant_func(
             w: torch.Tensor,
@@ -4318,7 +4328,7 @@ class FusedMoE(torch.nn.Module):
             )
             return
 
-        inter, hidden = self.intermediate_size_per_partition, self.hidden_size
+        inter = self.intermediate_size_per_partition
         for expert_id in range(self.local_num_experts):
             # --- w13 column-parallel ---
             w13_local = old_w13_data[expert_id]
@@ -4341,8 +4351,8 @@ class FusedMoE(torch.nn.Module):
                 w1_bf16 = w13_local[:w1_size]
                 w3_bf16 = w13_local[w1_size:]
             # Drop the source's padding.
-            w1_bf16 = w1_bf16[:inter, :hidden].contiguous()
-            w3_bf16 = w3_bf16[:inter, :hidden].contiguous()
+            w1_bf16 = w1_bf16[:inter].contiguous()
+            w3_bf16 = w3_bf16[:inter].contiguous()
 
             w1_q, w1_s = _quant_weight(w1_bf16)
             w3_q, w3_s = _quant_weight(w3_bf16)
@@ -4409,7 +4419,7 @@ class FusedMoE(torch.nn.Module):
                     old_w2_scale_2[expert_id] if source_is_nvfp4 else None,
                 )
             # And from w2, before the gather.
-            w2_local = w2_local[:hidden, :inter].contiguous()
+            w2_local = w2_local[:, :inter].contiguous()
             if need_gather_w2:
                 w2_full = tp_group.all_gather(w2_local, dim=1)
                 w2_q, w2_s = _quant_weight(w2_full)

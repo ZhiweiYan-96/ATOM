@@ -59,10 +59,12 @@ def test_shared_norm_layout_and_fp64_formula(single_rank, dim, length):
     torch.testing.assert_close(actual, expected.bfloat16(), rtol=1 / 128, atol=2**-12)
 
 
+@pytest.mark.parametrize("rows", [1, 7, 64, 2000])
+@pytest.mark.parametrize("q_dim,eps", [(1024, 1e-6), (1280, 1e-20)])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm GPU required")
-def test_per_token_dual_norm_is_the_bf16_one_quantized_per_row():
+def test_per_token_dual_norm_is_the_bf16_one_quantized_per_row(rows, q_dim, eps):
     """Q per token, one F32 scale a row, within FP8 rounding of the BF16 norm;
-    K as the BF16 norm writes it."""
+    K as the BF16 norm writes it. Decode, prefill and long-step row counts."""
     from types import SimpleNamespace
 
     from aiter import dtypes
@@ -71,16 +73,16 @@ def test_per_token_dual_norm_is_the_bf16_one_quantized_per_row():
 
     torch.manual_seed(5)
 
-    def norm(dim, eps):
+    def norm(dim):
         weight = torch.randn(dim, device="cuda", dtype=torch.bfloat16)
         return SimpleNamespace(weight=weight, eps=eps)
 
-    q_norm, k_norm = norm(1024, 1e-6), norm(512, 1e-6)
-    rows = torch.randn(7, 1536, device="cuda", dtype=torch.bfloat16) * 3
-    q, k = rows[:, :1024], rows[:, 1024:]
+    q_norm, k_norm = norm(q_dim), norm(512)
+    fused = torch.randn(rows, q_dim + 512, device="cuda", dtype=torch.bfloat16) * 3
+    q, k = fused[:, :q_dim], fused[:, q_dim:]
     q8, scale, k_out = DualRMSNormPerToken(q_norm, k_norm, quant_dtype=dtypes.fp8)(q, k)
     want_q, _, want_k = DualRMSNormBF16(q_norm, k_norm)(q, k)
-    assert q8.dtype == dtypes.fp8 and scale.shape == (7, 1)
+    assert q8.dtype == dtypes.fp8 and scale.shape == (rows, 1)
     torch.testing.assert_close(k_out, want_k, rtol=1 / 128, atol=2**-16)
     got = q8.float() * scale
     bound = want_q.float().abs().amax(dim=-1, keepdim=True) / 16

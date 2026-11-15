@@ -60,7 +60,7 @@ class DraftAttention(Attention):
     @property
     def wkv_shard(self):
         """`wqkv_a` narrowed to the KV rows, for the fused context-KV GEMM."""
-        view = self.__dict__.get("_wkv_shard")
+        view = getattr(self, "_wkv_shard", None)
         if view is None:
             view = self._wkv_shard = self.wqkv_a.shard_view(1)
         return view
