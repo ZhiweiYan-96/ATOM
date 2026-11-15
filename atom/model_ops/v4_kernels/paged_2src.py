@@ -49,7 +49,6 @@ Numerics: identical online-softmax + sink finalization to
 """
 
 import functools
-import os
 
 import torch
 import triton
@@ -573,10 +572,9 @@ def _sparse_attn_v4_split_combine_kernel(
 
 
 # Split-KV for few-token CSA steps: about two programs per CU, at least
-# `_SPLIT_MIN_KEYS` keys per split. A short list of split counts bounds the
-# compiled variants.
+# `ATOM_V4_ATTN_SPLIT_MIN_KEYS` keys per split. A short list of split counts
+# bounds the compiled variants.
 _SPLIT_COUNTS = (20, 10, 5, 3, 2)
-_SPLIT_MIN_KEYS = int(os.environ.get("ATOM_V4_ATTN_SPLIT_MIN_KEYS", "32"))
 _SPLIT_BLOCK_K = 16
 _COMBINE_BLOCK_DC = 64  # D columns per combine program
 
@@ -587,14 +585,14 @@ def _cu_count(device_index: int) -> int:
 
 
 def _csa_num_splits(tokens: int, head_blocks: int, avg_keys: float, device) -> int:
-    if os.environ.get("ATOM_V4_ATTN_SPLIT_KV", "1") == "0":
+    if not envs.ATOM_V4_ATTN_SPLIT_KV:
         return 1
     target = 2 * _cu_count(device.index if device.index is not None else 0)
     programs = tokens * head_blocks
     if programs >= target // 2:
         return 1
     want = -(-target // programs)
-    cap = max(1, int(avg_keys // _SPLIT_MIN_KEYS))
+    cap = max(1, int(avg_keys // envs.ATOM_V4_ATTN_SPLIT_MIN_KEYS))
     return next((s for s in _SPLIT_COUNTS if s <= min(want, cap)), 1)
 
 

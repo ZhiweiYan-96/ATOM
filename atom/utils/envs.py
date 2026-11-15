@@ -555,6 +555,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "ATOM_V4_INDEXER_QSPLIT_MIN_LOGITS": lambda: int(
         os.getenv("ATOM_V4_INDEXER_QSPLIT_MIN_LOGITS", str(1 << 26))
     ),
+    # CSA decode split-KV in the V4 Triton sparse-attention fallback, for steps
+    # too small to fill the GPU; 0 keeps one program per query row.
+    "ATOM_V4_ATTN_SPLIT_KV": lambda: _flag_env("ATOM_V4_ATTN_SPLIT_KV", "1"),
+    # The fewest keys a split takes.
+    "ATOM_V4_ATTN_SPLIT_MIN_KEYS": lambda: int(
+        os.getenv("ATOM_V4_ATTN_SPLIT_MIN_KEYS", "32")
+    ),
     # DCP sparse (DSA) prefill: when QREP is active, produce the whole DCP
     # group's query heads locally, as decode does, instead of AllGather Q. The
     # pynccl gather lands rank-major, so the dim=1 reshape after it also copies

@@ -66,12 +66,14 @@ class DraftAttention(Attention):
         return view
 
     def project_context(self, hidden, positions, rope, *, packed=False):
-        """Target keys alone; the query half is computed and dropped.
-
-        As V4's draft does, and only on the unfused path -- when the stages
-        fuse, `write_context_kv` reads `wkv_shard` and no query is projected.
+        """Target keys alone, only on the unfused path -- when the stages
+        fuse, `write_context_kv` reads `wkv_shard`. A BF16 `wqkv_a` projects
+        only the KV rows; an FP8 one computes the query half and drops it.
         """
-        _, kv_pre = self.project_qkv(hidden)
+        if self.wqkv_a.weight.dtype == torch.bfloat16:
+            kv_pre = self.wkv_shard(hidden)
+        else:
+            _, kv_pre = self.project_qkv(hidden)
         return self.context_keys(self.kv_norm(kv_pre), positions, rope, packed=packed)
 
     def forward(self, hidden, hidden_scale, context_kv, step, rope, *, hidden_fp8=None):

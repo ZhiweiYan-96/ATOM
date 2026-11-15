@@ -167,16 +167,6 @@ def native_group32_runs_bf16() -> bool:
     return get_gfx_runtime().startswith("gfx94")
 
 
-def dequantize_native_group32_weight(
-    weight: torch.Tensor, weight_scale: torch.Tensor, group_rows: int
-) -> torch.Tensor:
-    """FP8 [N, K] with E8M0 [ceil(N/group_rows), K/32] scales -> BF16 [N, K]."""
-    n, k = weight.shape
-    scale = fp4_utils.e8m0_to_f32(weight_scale)
-    scale = scale.repeat_interleave(group_rows, 0)[:n].repeat_interleave(32, 1)[:, :k]
-    return (weight.float() * scale).to(torch.bfloat16)
-
-
 def _is_mxfp4(quant_type, quant_dtype) -> bool:
     # By value: plugin-mode QuantType members do not compare equal under `==`.
     return (
@@ -1363,12 +1353,14 @@ class LinearBase(nn.Module):
                 and self.weight.dtype == torch.float8_e4m3fn
                 and native_group32_runs_bf16()
             ):
+                from atom.model_ops.blockscale import dequantize_fp8_weight
+
                 # No group32 FP8 GEMM here: keep a BF16 weight.
                 self.weight = atom_parameter(
-                    dequantize_native_group32_weight(
+                    dequantize_fp8_weight(
                         self.weight.data,
                         self.weight_scale.data,
-                        self.native_a8_group_rows,
+                        group_rows=self.native_a8_group_rows,
                     )
                 )
                 self.weight_scale = None
