@@ -4,6 +4,7 @@
 import logging
 
 import torch
+from aiter import QuantType
 from aiter.dist.parallel_state import get_tp_group
 from aiter.ops.batched_gemm_op_a8w8 import batched_gemm_a8w8_mxscale_bpreshuffle
 
@@ -37,7 +38,12 @@ from atom.model_ops.deepseek_v41.paged_scoring import (
     score_topk_quantized,
 )
 from atom.model_ops.fp4_mqa_ragged_metadata import Fp4MqaRaggedMetadata
-from atom.model_ops.layernorm import DualRMSNormBF16, DualRMSNormMXFP8, RMSNorm
+from atom.model_ops.layernorm import (
+    DualRMSNormBF16,
+    DualRMSNormMXFP8,
+    DualRMSNormPerToken,
+    RMSNorm,
+)
 from atom.model_ops.linear import (
     ColumnParallelLinear,
     MergedReplicatedLinear,
@@ -294,19 +300,20 @@ class Attention(nn.Module):
         self.kv_norm = RMSNorm(self.head_dim, config.rms_norm_eps)
         # Both latents are slices of the one `wqkv_a` output and neither norm
         # reads the other's result, so they are one launch rather than two.
-        # BF16 Q unless wq_b / indexer.wq_b read MXFP8 (native group32 GEMMs).
-        self.qk_norm = (
-            DualRMSNormBF16(
-                self.q_norm, self.kv_norm, f"layers.{spec.layer_id}.qk_norm"
+        # Q in the format wq_b and indexer.wq_b take, quantized once for both:
+        # per token for per-channel GEMMs; for native group32 ones MXFP8, or
+        # BF16 where those run in BF16.
+        name = f"layers.{spec.layer_id}.qk_norm"
+        if self.wq_b.quant_type.value == QuantType.per_Token.value:
+            self.qk_norm = DualRMSNormPerToken(
+                self.q_norm, self.kv_norm, name, quant_dtype=self.wq_b.params_dtype
             )
-            if native_group32_runs_bf16() or self.wq_b.native_a8_group_rows is None
-            else DualRMSNormMXFP8(
-                self.q_norm,
-                self.kv_norm,
-                f"layers.{spec.layer_id}.qk_norm",
-                amax_floor=AMAX_FLOOR.value,
+        elif native_group32_runs_bf16():
+            self.qk_norm = DualRMSNormBF16(self.q_norm, self.kv_norm, name)
+        else:
+            self.qk_norm = DualRMSNormMXFP8(
+                self.q_norm, self.kv_norm, name, amax_floor=AMAX_FLOOR.value
             )
-        )
         # wo_a: grouped LoRA, FP8 + 32x32 e8m0 block scale. Allocated as a
         # quantized ColumnParallelLinear so both tensors load through the
         # standard FP8 path; the grouped GEMM reads them in place, the weight
