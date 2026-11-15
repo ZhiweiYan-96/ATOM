@@ -39,7 +39,7 @@ from atom.utils import envs
 
 from .attention import Attention
 from .config import build_attention_topology
-from .layers import native_quant_config
+from .layers import converted_linear_spec, native_quant_config
 from .model import Block, DeepseekV41ForCausalLM
 
 logger = logging.getLogger("atom")
@@ -170,11 +170,14 @@ class DeepseekV41DSpark(DSparkDraftModel):
         draft = copy(args)
         draft.n_routed_experts = args.dspark_n_routed_experts
         draft.num_experts_per_tok = args.dspark_num_experts_per_tok
+        # An FP4PTPC checkpoint converts only the backbone's linears; the
+        # draft's stay native.
+        draft.fp4ptpc = False
         # Same rules as the backbone.
         self.moe_quant_config = make_v4_quant_config(
             draft,
             online_quant_config=getattr(config, "online_quant_config", None),
-            shared_expert_spec=native_quant_config().global_spec,
+            shared_expert_spec=converted_linear_spec(draft),
             online_routed_experts=True,
         )
         topology = build_attention_topology(args)[args.num_hidden_layers :]

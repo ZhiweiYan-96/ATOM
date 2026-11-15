@@ -70,6 +70,26 @@ def test_model_owns_and_forwards_expert_quantization(
         assert online_shared.quant_type == QuantType.per_1x32
 
 
+@pytest.mark.parametrize("entrypoint", ["runtime", "offline", "draft", "draft_offline"])
+def test_fp4ptpc_shared_expert_is_per_channel_on_the_backbone_only(
+    monkeypatch, single_rank, unallocated_moe, build_v41, entrypoint
+):
+    """An FP4PTPC backbone's shared expert is per-channel FP8 like its
+    attention projections, on both lookups; the draft's stays native."""
+    monkeypatch.setattr(unallocated_moe, "fp4ptpc", True)
+    instance = build_v41(entrypoint, {"global_quant_config": "per_block_fp8"})
+    draft = entrypoint.startswith("draft")
+    config = instance.moe_quant_config
+    for block in instance.mtp if draft else instance.layers:
+        shared = f"{block.ffn.prefix}.shared_experts.gate_up_proj"
+        source = config.get_layer_quant_config(shared)
+        online = config.get_layer_quant_config(shared, use_online_quant=True)
+        assert source.quant_type == (
+            QuantType.per_1x32 if draft else QuantType.per_Token
+        )
+        assert online == source
+
+
 def test_shared_loading_follows_any_fused_layer():
     """Online quant can leave a layer unfused; the loader then decides per layer."""
     from torch import nn

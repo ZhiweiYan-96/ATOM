@@ -9,16 +9,6 @@ import torch
 from atom.quant_spec import LayerQuantConfig
 
 
-@pytest.fixture
-def linear_modules(monkeypatch):
-    pytest.importorskip("aiter")
-    from atom.model_ops import linear
-
-    group = SimpleNamespace(rank_in_group=0, world_size=4)
-    monkeypatch.setattr(linear, "get_tp_group", lambda: group)
-    return linear, group
-
-
 def _config(block_rows=32):
     from aiter import QuantType
 
@@ -151,6 +141,66 @@ def test_parallel_source_slices_and_scale_alignment(linear_modules, kind):
             module.weight_scale.view(torch.uint8), scale_shard.view(torch.uint8)
         )
         assert getattr(module.weight, "is_shuffled", False) == preshuffled
+
+
+@pytest.mark.parametrize("kind", ["ColumnParallelLinear", "RowParallelLinear"])
+def test_per_channel_source_slices_with_its_row_scales(
+    linear_modules, per_channel_config, kind
+):
+    """OCP FP8 with one F32 scale an output row: a column-parallel rank keeps
+    its rows' scales, a row-parallel one all of them, and whatever FP8 type
+    and layout the GEMM stores the weight in, weight times scale is the
+    source's."""
+    from atom.mono.weights.layer import _unshuffle_linear_weight
+
+    linear, group = linear_modules
+    torch.manual_seed(7)
+    weight = torch.randn(512, 128).to(torch.float8_e4m3fn)
+    scales = torch.rand(512, 1) + 0.5
+    axis = 0 if kind == "ColumnParallelLinear" else 1
+    for rank in range(4):
+        group.rank_in_group = rank
+        module = getattr(linear, kind)(128, 512, quant_config=per_channel_config)
+        module.weight_loader(module.weight, weight)
+        module.weight_loader(module.weight_scale, scales)
+        module.process_weights_after_loading()
+        shard = weight.chunk(4, axis)[rank]
+        scale_shard = scales.chunk(4, 0)[rank] if axis == 0 else scales
+        stored = _unshuffle_linear_weight(module.weight)
+        assert not module.is_output_padded
+        assert torch.equal(
+            stored.float() * module.weight_scale.float(), shard.float() * scale_shard
+        )
+
+
+def test_per_channel_linear_restores_leading_dims(
+    linear_modules, per_channel_config, monkeypatch
+):
+    """The per-token quant and the a8w8 GEMM take rows: a (B, T, K) input and
+    its (B, T, 1) scale reach them as B * T rows, and the result comes back in
+    (B, T, N)."""
+    linear, group = linear_modules
+    group.world_size = 1
+    module = linear.ReplicatedLinear(256, 512, quant_config=per_channel_config)
+    seen = []
+
+    def quant(x, quant_dtype, scale=None):
+        seen.append(("quant", tuple(x.shape)))
+        return x, torch.ones(x.shape[0], 1)
+
+    def gemm(x, weight, x_scale, weight_scale, dtype=None):
+        seen.append(("gemm", tuple(x.shape), tuple(x_scale.shape)))
+        return torch.arange(x.shape[0] * 512.0).view(x.shape[0], 512)
+
+    module.quant_func = quant
+    monkeypatch.setattr(linear, "use_triton_gemm", lambda: False)
+    monkeypatch.setattr(linear, "gemm_a8w8_bpreshuffle", gemm)
+    rows = torch.arange(6 * 512.0).view(6, 512)
+    assert torch.equal(module(torch.randn(2, 3, 256)), rows.view(2, 3, 512))
+    assert seen == [("quant", (6, 256)), ("gemm", (6, 256), (6, 1))]
+    seen.clear()
+    module(torch.randn(2, 3, 256), torch.ones(2, 3, 1))
+    assert seen == [("gemm", (6, 256), (6, 1))]
 
 
 @pytest.mark.parametrize("shard_ids", [None, (0, 1)])

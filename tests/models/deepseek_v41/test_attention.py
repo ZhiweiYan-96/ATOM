@@ -456,3 +456,29 @@ def test_draft_context_kv_fusion_sees_the_kv_half(single_rank, small_config):
         shard.weight_scale.view(torch.uint8),
         attention.wqkv_a.weight_scale.view(torch.uint8)[rows // group :],
     )
+
+
+@pytest.mark.parametrize("fp4ptpc", [False, True])
+def test_q_leaves_its_norm_in_the_format_its_readers_take(
+    single_rank, small_config, fp4ptpc
+):
+    """`wq_b` and `indexer.wq_b` share one spec and one Q: BF16 for an FP4PTPC
+    checkpoint's per-channel GEMMs, which quantize it per token; for native
+    group32 ones MXFP8, or BF16 where those run in BF16."""
+    from aiter import QuantType
+
+    from atom.model_ops.layernorm import DualRMSNormBF16, DualRMSNormMXFP8
+    from atom.model_ops.linear import native_group32_runs_bf16
+    from atom.models.deepseek_v41.attention import Attention
+    from atom.models.deepseek_v41.config import build_attention_topology
+
+    small_config.fp4ptpc = fp4ptpc
+    spec = build_attention_topology(small_config)[1]
+    attention = Attention(small_config, spec)
+    bf16 = fp4ptpc or native_group32_runs_bf16()
+    assert type(attention.qk_norm) is (DualRMSNormBF16 if bf16 else DualRMSNormMXFP8)
+    readers = [attention.wq_b]
+    if attention.indexer is not None:
+        readers.append(attention.indexer.wq_b)
+    for reader in readers:
+        assert (reader.quant_type == QuantType.per_Token) == fp4ptpc

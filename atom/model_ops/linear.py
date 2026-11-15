@@ -1636,6 +1636,13 @@ class LinearBase(nn.Module):
             "Linear out= requested but this quant path does not support it "
             f"(quant_type={self.quant_type})."
         )
+        # The per-token quant and the a8w8 GEMMs take rows: flatten the leading
+        # dims here and restore them on the way out.
+        lead = None
+        if x.dim() > 2 and self.quant_type.value == QuantType.per_Token.value:
+            lead, x = x.shape[:-1], x.flatten(0, -2)
+            if x_scale is not None:
+                x_scale = x_scale.flatten(0, -2)
         if (
             self.native_a8_group_rows is not None
             and self.weight.dtype == torch.bfloat16
@@ -1799,6 +1806,8 @@ class LinearBase(nn.Module):
             y = y[..., : self._output_size_before_padding]
         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
             y = tensor_model_parallel_all_reduce(y)
+        if lead is not None:
+            y = y.reshape(*lead, y.shape[-1])
         return y
 
     def make_row_view(self, start: int, length: int) -> "LinearBase":
