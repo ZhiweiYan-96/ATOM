@@ -205,7 +205,7 @@ def _radix_refusals(memory, exec_, schedule, spec) -> tuple:
         # The DSpark draft rings and the verify lifecycle are not proved
         # under a replay yet.
         (
-            "speculative decoding with radix cache",
+            "speculative decoding with radix cache (launch with --disable-radix-cache)",
             _sglang_setting(spec, "speculative_algorithm", None) is not None,
         ),
     )
@@ -250,13 +250,12 @@ def refuse_unsupported_sglang_features() -> None:
     if sglang_radix_cache_enabled():
         from atom.utils import envs
 
+        # The launch policy (`deepseek_v41_radix.v41_radix_launch_override`)
+        # turns SGLang's radix cache off before this runs wherever the replay
+        # cannot serve; these refusals stand in where it did not run.
         unsupported += (
             (
-                (
-                    "radix cache without ATOM_V41_RADIX=1 (opt-in until the "
-                    "fused replay is validated on GPU; or launch with "
-                    "--disable-radix-cache)"
-                ),
+                "radix cache with ATOM_V41_RADIX=0 (launch with --disable-radix-cache)",
                 not envs.ATOM_V41_RADIX,
             ),
             # The replay side batch carries no sampling info.
