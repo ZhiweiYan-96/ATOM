@@ -170,6 +170,7 @@ def _linear_double(quant_type, params_dtype, needs_preshuffled_weight, *, dim=2)
         # any layout at all and so would answer every case below the same way.
         native_a8_group_rows=None,
         _maybe_pad_a8w8_preshuffle_output=lambda: False,
+        _maybe_pad_unquantized_output=lambda: False,
         prefix="test",
     )
 
