@@ -131,6 +131,9 @@ cannot affect a server that does not use the feature.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | **ATOM_DISABLE_VLLM_PLUGIN** | bool | 0 (false) | If set to `1`, disable the vLLM plugin registration entirely. |
+| **ATOM_V41_RADIX** | bool | 0 (false) | SGLang plugin, DeepSeek-V4.1: opt in to SGLang's radix (prefix) cache. Without it a launch that leaves radix cache on is refused (pass `--disable-radix-cache`). Off by default because a prefix hit runs a separate replay forward (~0.2 s), so hits below ~4k tokens are slower than a cold prefill. |
+| **ATOM_V41_RADIX_REPLAY_ROWS** | int | 128 | SGLang plugin, DeepSeek-V4.1 with radix cache on: how many rows below a prefix hit are recomputed into the request's freshly reset STATE slot (window ring, compressor rings, Engram history) in one side forward before its extend. Clamped to the hit length; must be even and at least the sliding window (128), and `--chunked-prefill-size` must not be below it. Larger values shrink the bounded-window approximation at the cost of more recomputed rows. |
+| **ATOM_V41_RADIX_DEBUG** | bool | 0 (false) | SGLang plugin, DeepSeek-V4.1 with radix cache on, diagnostic: for every replay side forward, checksum every shared PAGE (main rows and index planes) below each hit before and after it and log `V4.1 radix debug: ... pages_changed=N`, and all-reduce its row count over the TP group (`tp_agree=`). Costs a device sync and a pass over the hit pages per side forward. |
 | **ATOM_V4_CG_INSTR_DIR** | str | — (off) | vLLM plugin, DeepSeek-V4 diagnostic: directory for per-process cudagraph dispatch counters (dispatched modes, steps whose uniform decode was overridden for a still-prefilling row, guard trips), one `cg_<pid>.json` per process, rewritten on every step. |
 
 ## Kernel / backend selection

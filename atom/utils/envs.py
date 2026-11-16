@@ -281,6 +281,17 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "ATOM_SGLANG_EAGLE3_TP_VERIFY_BROADCAST": lambda: (
         os.getenv("ATOM_SGLANG_EAGLE3_TP_VERIFY_BROADCAST", "0") == "1"
     ),
+    # DeepSeek-V4.1 on the SGLang plugin with radix cache on: the rows below a
+    # prefix hit recomputed into the request's fresh STATE slot before its
+    # extend (`deepseek_v41_radix`). Even, at least the sliding window.
+    # Opt in to radix (prefix) cache for DeepSeek-V4.1 on the SGLang plugin.
+    # Off by default: a hit below ~4k tokens is slower than a cold prefill
+    # until the replay rows are folded into the main forward.
+    "ATOM_V41_RADIX": lambda: _flag_env("ATOM_V41_RADIX"),
+    "ATOM_V41_RADIX_REPLAY_ROWS": lambda: _int_env("ATOM_V41_RADIX_REPLAY_ROWS", 128),
+    # Diagnostics for the same: per side forward, a checksum of every shared
+    # PAGE below each hit before and after it, and a TP check of its row count.
+    "ATOM_V41_RADIX_DEBUG": lambda: _flag_env("ATOM_V41_RADIX_DEBUG"),
     # Dynamic CPP follows SGLang's quadratic chunk-size predictor. This factor
     # interpolates between the configured initial chunk size (0) and the fitted
     # equal-latency size (1). Values around 0.6-0.85 are typically most stable.
